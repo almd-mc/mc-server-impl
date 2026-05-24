@@ -1,0 +1,367 @@
+// Minecraft server implementation for 1.21.1.
+// Corresponds to PrismarineJS/flying-squid.
+//
+// A lightweight Minecraft server core: world management, player handling,
+// spawning, chat, and game rules.
+//
+// Usage:
+//   import mc_server_impl
+//   let server = mc_server_impl.new_server(mc_server_impl.default_config())
+//   let server2 = mc_server_impl.add_player(server, "Player1", "uuid-1")
+
+// --- Types ---
+
+type ServerConfig = {
+  max_players: Int,
+  motd: String,
+  gamemode: Int,
+  difficulty: Int,
+  view_distance: Int,
+  spawn_x: Int,
+  spawn_y: Int,
+  spawn_z: Int,
+  level_type: String,
+  enable_pvp: Bool,
+}
+
+type Player = {
+  username: String,
+  uuid: String,
+  x: Float,
+  y: Float,
+  z: Float,
+  yaw: Float,
+  pitch: Float,
+  health: Float,
+  food: Int,
+  gamemode: Int,
+  entity_id: Int,
+  is_op: Bool,
+}
+
+type GameRule = {
+  name: String,
+  value: String,
+}
+
+type Server = {
+  config: ServerConfig,
+  players: List[Player],
+  game_rules: List[GameRule],
+  tick: Int,
+  next_entity_id: Int,
+}
+
+// --- Config ---
+
+fn default_config() -> ServerConfig = {
+  {
+    max_players: 20,
+    motd: "Almide Minecraft Server",
+    gamemode: 0,
+    difficulty: 1,
+    view_distance: 10,
+    spawn_x: 0,
+    spawn_y: 64,
+    spawn_z: 0,
+    level_type: "default",
+    enable_pvp: true,
+  }
+}
+
+// --- Server ---
+
+fn new_server(config: ServerConfig) -> Server = {
+  let rules = [
+    { name: "doDaylightCycle", value: "true" },
+    { name: "doMobSpawning", value: "true" },
+    { name: "keepInventory", value: "false" },
+    { name: "doFireTick", value: "true" },
+    { name: "pvp", value: if config.enable_pvp then "true" else "false" },
+  ]
+  { config: config, players: [], game_rules: rules, tick: 0, next_entity_id: 1 }
+}
+
+fn tick(server: Server) -> Server =
+  { ...server, tick: server.tick + 1 }
+
+fn player_count(server: Server) -> Int =
+  list.length(server.players)
+
+fn is_full(server: Server) -> Bool =
+  player_count(server) >= server.config.max_players
+
+// --- Player management ---
+
+fn new_player(username: String, uuid: String, entity_id: Int, config: ServerConfig) -> Player = {
+  {
+    username: username,
+    uuid: uuid,
+    x: int.to_float(config.spawn_x),
+    y: int.to_float(config.spawn_y),
+    z: int.to_float(config.spawn_z),
+    yaw: 0.0,
+    pitch: 0.0,
+    health: 20.0,
+    food: 20,
+    gamemode: config.gamemode,
+    entity_id: entity_id,
+    is_op: false,
+  }
+}
+
+fn add_player(server: Server, username: String, uuid: String) -> Server = {
+  let player = new_player(username, uuid, server.next_entity_id, server.config)
+  { ...server, players: server.players + [player], next_entity_id: server.next_entity_id + 1 }
+}
+
+fn remove_player(server: Server, uuid: String) -> Server = {
+  let new_players = list.filter(server.players, (p) => p.uuid != uuid)
+  { ...server, players: new_players }
+}
+
+fn get_player(server: Server, uuid: String) -> Option[Player] =
+  list.find(server.players, (p) => p.uuid == uuid)
+
+fn get_player_by_name(server: Server, username: String) -> Option[Player] =
+  list.find(server.players, (p) => p.username == username)
+
+fn update_player_position(server: Server, uuid: String, x: Float, y: Float, z: Float) -> Server = {
+  let new_players = list.map(server.players, (p) => {
+    if p.uuid == uuid then { ...p, x: x, y: y, z: z } else p
+  })
+  { ...server, players: new_players }
+}
+
+fn set_player_health(server: Server, uuid: String, health: Float) -> Server = {
+  let new_players = list.map(server.players, (p) => {
+    if p.uuid == uuid then { ...p, health: health } else p
+  })
+  { ...server, players: new_players }
+}
+
+fn set_player_gamemode(server: Server, uuid: String, gamemode: Int) -> Server = {
+  let new_players = list.map(server.players, (p) => {
+    if p.uuid == uuid then { ...p, gamemode: gamemode } else p
+  })
+  { ...server, players: new_players }
+}
+
+fn set_player_op(server: Server, uuid: String, is_op: Bool) -> Server = {
+  let new_players = list.map(server.players, (p) => {
+    if p.uuid == uuid then { ...p, is_op: is_op } else p
+  })
+  { ...server, players: new_players }
+}
+
+// --- Game rules ---
+
+fn get_game_rule(server: Server, name: String) -> String = {
+  let rule = list.find(server.game_rules, (r) => r.name == name)
+  match rule {
+    some(r) => r.value,
+    none => "",
+  }
+}
+
+fn set_game_rule(server: Server, name: String, value: String) -> Server = {
+  let exists = list.any(server.game_rules, (r) => r.name == name)
+  if exists then {
+    let rules = list.map(server.game_rules, (r) => if r.name == name then { ...r, value: value } else r)
+    { ...server, game_rules: rules }
+  } else {
+    { ...server, game_rules: server.game_rules + [{ name: name, value: value }] }
+  }
+}
+
+// --- Chat ---
+
+fn format_chat(sender: String, message: String) -> String =
+  "<${sender}> ${message}"
+
+fn format_system_message(message: String) -> String =
+  "[Server] ${message}"
+
+// --- Gamemode names ---
+
+fn gamemode_name(id: Int) -> String = {
+  match id {
+    0 => "survival",
+    1 => "creative",
+    2 => "adventure",
+    3 => "spectator",
+    _ => "unknown",
+  }
+}
+
+fn difficulty_name(id: Int) -> String = {
+  match id {
+    0 => "peaceful",
+    1 => "easy",
+    2 => "normal",
+    3 => "hard",
+    _ => "unknown",
+  }
+}
+
+// --- Tests ---
+
+test "default_config" {
+  let config = default_config()
+  assert_eq(config.max_players, 20)
+  assert_eq(config.spawn_y, 64)
+  assert_eq(config.enable_pvp, true)
+}
+
+test "new_server" {
+  let server = new_server(default_config())
+  assert_eq(player_count(server), 0)
+  assert_eq(server.tick, 0)
+  assert(not is_full(server))
+}
+
+test "add_player" {
+  let server = new_server(default_config())
+  let s2 = add_player(server, "Alice", "uuid-a")
+  assert_eq(player_count(s2), 1)
+  match get_player(s2, "uuid-a") {
+    some(p) => {
+      assert_eq(p.username, "Alice")
+      assert_eq(p.health, 20.0)
+      assert_eq(p.y, 64.0)
+    },
+    none => assert(false),
+  }
+}
+
+test "remove_player" {
+  let server = new_server(default_config())
+  let s2 = add_player(add_player(server, "A", "u1"), "B", "u2")
+  assert_eq(player_count(s2), 2)
+  let s3 = remove_player(s2, "u1")
+  assert_eq(player_count(s3), 1)
+  match get_player(s3, "u1") {
+    none => assert(true),
+    some(_p) => assert(false),
+  }
+}
+
+test "entity_id auto increment" {
+  let server = new_server(default_config())
+  let s2 = add_player(add_player(server, "A", "u1"), "B", "u2")
+  match get_player(s2, "u1") {
+    some(p) => assert_eq(p.entity_id, 1),
+    none => assert(false),
+  }
+  match get_player(s2, "u2") {
+    some(p) => assert_eq(p.entity_id, 2),
+    none => assert(false),
+  }
+}
+
+test "update_player_position" {
+  let server = add_player(new_server(default_config()), "A", "u1")
+  let s2 = update_player_position(server, "u1", 10.5, 65.0, -3.2)
+  match get_player(s2, "u1") {
+    some(p) => {
+      assert_eq(p.x, 10.5)
+      assert_eq(p.y, 65.0)
+    },
+    none => assert(false),
+  }
+}
+
+test "set_player_health" {
+  let server = add_player(new_server(default_config()), "A", "u1")
+  let s2 = set_player_health(server, "u1", 5.0)
+  match get_player(s2, "u1") {
+    some(p) => assert_eq(p.health, 5.0),
+    none => assert(false),
+  }
+}
+
+test "set_player_gamemode" {
+  let server = add_player(new_server(default_config()), "A", "u1")
+  let s2 = set_player_gamemode(server, "u1", 1)
+  match get_player(s2, "u1") {
+    some(p) => assert_eq(p.gamemode, 1),
+    none => assert(false),
+  }
+}
+
+test "game rules" {
+  let server = new_server(default_config())
+  assert_eq(get_game_rule(server, "keepInventory"), "false")
+  let s2 = set_game_rule(server, "keepInventory", "true")
+  assert_eq(get_game_rule(s2, "keepInventory"), "true")
+}
+
+test "game rule - add new" {
+  let server = new_server(default_config())
+  let s2 = set_game_rule(server, "customRule", "hello")
+  assert_eq(get_game_rule(s2, "customRule"), "hello")
+}
+
+test "tick" {
+  let server = new_server(default_config())
+  let s2 = tick(tick(tick(server)))
+  assert_eq(s2.tick, 3)
+}
+
+test "format_chat" {
+  assert_eq(format_chat("Steve", "Hello!"), "<Steve> Hello!")
+}
+
+test "format_system_message" {
+  assert_eq(format_system_message("Welcome"), "[Server] Welcome")
+}
+
+test "gamemode_name" where [
+  "survival"  [id = 0, want = "survival"],
+  "creative"  [id = 1, want = "creative"],
+  "adventure" [id = 2, want = "adventure"],
+  "spectator" [id = 3, want = "spectator"],
+  "unknown"   [id = 99, want = "unknown"],
+] {
+  assert_eq(gamemode_name(id), want)
+}
+
+test "difficulty_name" where [
+  "peaceful" [id = 0, want = "peaceful"],
+  "easy"     [id = 1, want = "easy"],
+  "normal"   [id = 2, want = "normal"],
+  "hard"     [id = 3, want = "hard"],
+] {
+  assert_eq(difficulty_name(id), want)
+}
+
+test "get_player_by_name" {
+  let server = add_player(new_server(default_config()), "Alice", "u1")
+  match get_player_by_name(server, "Alice") {
+    some(p) => assert_eq(p.uuid, "u1"),
+    none => assert(false),
+  }
+}
+
+test "is_full" {
+  let config: ServerConfig = { ...default_config(), max_players: 1 }
+  let server = new_server(config)
+  assert(not is_full(server))
+  let s2 = add_player(server, "A", "u1")
+  assert(is_full(s2))
+}
+
+test "set_player_op" {
+  let server = add_player(new_server(default_config()), "A", "u1")
+  let s2 = set_player_op(server, "u1", true)
+  match get_player(s2, "u1") {
+    some(p) => assert(p.is_op),
+    none => assert(false),
+  }
+}
+
+test "pvp game rule from config" {
+  let config: ServerConfig = { ...default_config(), enable_pvp: false }
+  let server = new_server(config)
+  assert_eq(get_game_rule(server, "pvp"), "false")
+}
