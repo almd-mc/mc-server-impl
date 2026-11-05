@@ -97,9 +97,9 @@ fn new_player(username: String, uuid: String, entity_id: Int, config: ServerConf
   {
     username: username,
     uuid: uuid,
-    x: int.to_float(config.spawn_x),
-    y: int.to_float(config.spawn_y),
-    z: int.to_float(config.spawn_z),
+    x: float.from(config.spawn_x),
+    y: float.from(config.spawn_y),
+    z: float.from(config.spawn_z),
     yaw: 0.0,
     pitch: 0.0,
     health: 20.0,
